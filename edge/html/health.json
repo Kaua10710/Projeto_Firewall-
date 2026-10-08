@@ -1,0 +1,12 @@
+{
+  "servico": "edge-captura",
+  "papel": "mini-PC de captura e transmissao da quadra",
+  "zona": "DMZ Kovenza (172.28.20.0/24)",
+  "status": "ok",
+  "quadra": {
+    "identificador": "quadra-01",
+    "gravacao_em_memoria": true,
+    "transmissao_ao_vivo": "ativa"
+  },
+  "observacao": "Ambiente de laboratorio. Nenhum dado real do Kovenza Sports."
+}
