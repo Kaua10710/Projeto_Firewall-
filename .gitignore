@@ -1,0 +1,15 @@
+# Certificados gerados localmente (nunca versionar material de chave)
+*.pem
+*.key
+*.crt
+
+# Saída de execução dos scripts de teste
+evidencias/
+*.log
+
+# Ruído de sistema operacional / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

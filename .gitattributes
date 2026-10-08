@@ -1,0 +1,7 @@
+# Scripts executados dentro dos conteineres precisam de LF.
+# Sem isso, um checkout no Windows grava CRLF e o shell do Alpine
+# falha com "no such file or directory" na linha do shebang.
+*.sh            text eol=lf
+*.conf          text eol=lf
+Dockerfile      text eol=lf
+docker-compose.yml text eol=lf
