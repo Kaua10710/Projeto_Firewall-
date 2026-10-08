@@ -37,6 +37,57 @@ docker compose logs fw-kovenza
 O log do firewall imprime as seis etapas da aplicação da política e termina com
 a chain `FORWARD` completa.
 
+### Se o build falhar com `apk add ... exit code 5`
+
+Pode acontecer na primeira execução, e **não é defeito do projeto**. O Compose
+constrói as cinco imagens em paralelo, e cinco `apk add` simultâneos contra os
+mirrors do Alpine às vezes não completam o download do índice de pacotes. O
+sintoma é um erro enganoso, porque o `apk` relata o resultado e não a causa:
+
+```
+iproute2 (no such package):
+  required by: world[iproute2]
+...
+failed to solve: process "/bin/sh -c apk add --no-cache ..." exit code: 5
+```
+
+`no such package` para **todos** os pacotes, inclusive os que claramente existem,
+é a assinatura de índice não baixado — não de pacote inexistente.
+
+A solução é construir as imagens uma por vez, com nova tentativa em caso de
+falha, e só então subir o ambiente:
+
+```sh
+for alvo in firewall estacao edge db nuvem; do
+    case $alvo in
+        firewall) TAG=kovenza/firewall:1.0 ;;
+        estacao)  TAG=kovenza/ferramentas:1.0 ;;
+        edge)     TAG=kovenza/edge:1.0 ;;
+        db)       TAG=kovenza/db:1.0 ;;
+        nuvem)    TAG=kovenza/nuvem-supabase:1.0 ;;
+    esac
+    echo "### construindo $alvo -> $TAG"
+    for tentativa in 1 2 3; do
+        if docker build -q -t "$TAG" "./$alvo" > /dev/null 2>&1; then
+            echo "    OK (tentativa $tentativa)"
+            break
+        fi
+        echo "    falhou tentativa $tentativa"
+        [ "$tentativa" -eq 3 ] && echo "    DESISTINDO de $alvo"
+    done
+done
+
+docker compose up -d
+```
+
+As tags são exatamente as declaradas em
+[docker-compose.yml](docker-compose.yml), então o `docker compose up -d` final
+reaproveita as imagens já construídas em vez de refazê-las. Note que ele roda
+**sem** `--build`.
+
+Foi assim que o ambiente deste repositório foi validado, em conexão doméstica
+lenta. Em rede boa, o `docker compose up -d --build` direto funciona.
+
 ### Rodar os testes
 
 ```sh
