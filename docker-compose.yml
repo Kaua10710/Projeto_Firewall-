@@ -1,0 +1,241 @@
+# ===========================================================================
+# Kovenza Sports - laboratorio de segmentacao de rede com Netfilter/Iptables
+# Segurança da Informação | IF Goiano, Campus Ceres
+# ===========================================================================
+# Tres zonas em bridges Docker isoladas. Nenhum conteiner, exceto o firewall,
+# participa de mais de uma rede - e e isso que obriga o trafego entre zonas a
+# atravessar o fw-kovenza em vez de ser entregue direto pela bridge.
+#
+# Ambiente de laboratorio. Nenhum arquivo, credencial ou endpoint real do
+# sistema Kovenza Sports e utilizado aqui.
+# ===========================================================================
+
+name: kovenza-seginf-firewall
+
+# ---------------------------------------------------------------------------
+# Redes - definidas explicitamente com ipam, para que sub-rede e gateway nao
+# dependam do que o Docker resolver sortear.
+# ---------------------------------------------------------------------------
+networks:
+
+  rede_arena:
+    name: rede_arena
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.10.0/24
+          gateway: 172.28.10.1
+
+  rede_dmz:
+    name: rede_dmz
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.20.0/24
+          gateway: 172.28.20.1
+
+  rede_nuvem:
+    name: rede_nuvem
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.30.0/24
+          gateway: 172.28.30.1
+
+volumes:
+  dados_db_local:
+
+services:
+
+  # =========================================================================
+  # FIREWALL
+  # =========================================================================
+  fw-kovenza:
+    build: ./firewall
+    image: kovenza/firewall:1.0
+    container_name: fw-kovenza
+    hostname: fw-kovenza
+
+    # Unico conteiner nas tres redes: e o ponto de passagem obrigatorio.
+    networks:
+      rede_arena:
+        ipv4_address: 172.28.10.254
+      rede_dmz:
+        ipv4_address: 172.28.20.254
+      rede_nuvem:
+        ipv4_address: 172.28.30.254
+
+    # NET_ADMIN : manipular as chains do Netfilter e a tabela de roteamento
+    # NET_RAW   : exigido pelos modulos de match do iptables
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Declarado aqui por ser mais explicito para o avaliador; o entrypoint.sh
+    # tambem executa 'sysctl -w net.ipv4.ip_forward=1' (cinto e suspensorio).
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+    restart: unless-stopped
+
+  # =========================================================================
+  # ZONA 1 - REDE ARENA (LAN interna da arena parceira)
+  # =========================================================================
+  estacao-recepcao:
+    build: ./estacao
+    image: kovenza/ferramentas:1.0
+    container_name: estacao-recepcao
+    hostname: estacao-recepcao
+
+    networks:
+      rede_arena:
+        ipv4_address: 172.28.10.10
+
+    # NET_ADMIN para 'ip route add'; NET_RAW para o nmap usar socket cru.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # rotas.sh entra por volume para que uma correcao de rota nao exija
+    # rebuild das imagens.
+    volumes:
+      - ./scripts/rotas.sh:/opt/kovenza/rotas.sh:ro
+
+    command: >
+      sh -c "/opt/kovenza/rotas.sh 172.28.10.254 && exec sleep infinity"
+
+    depends_on:
+      - fw-kovenza
+    restart: unless-stopped
+
+  # =========================================================================
+  # ZONA 2 - DMZ KOVENZA (equipamento instalado na quadra)
+  # =========================================================================
+
+  edge-captura:
+    build: ./edge
+    image: kovenza/edge:1.0
+    container_name: edge-captura
+    hostname: edge-captura
+
+    networks:
+      rede_dmz:
+        ipv4_address: 172.28.20.10
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    volumes:
+      - ./scripts/rotas.sh:/opt/kovenza/rotas.sh:ro
+
+    depends_on:
+      - fw-kovenza
+    restart: unless-stopped
+
+  camera-rtsp:
+    build: ./estacao
+    image: kovenza/ferramentas:1.0
+    container_name: camera-rtsp
+    hostname: camera-rtsp
+
+    networks:
+      rede_dmz:
+        ipv4_address: 172.28.20.20
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    volumes:
+      - ./scripts/rotas.sh:/opt/kovenza/rotas.sh:ro
+
+    # Um listener em 554 basta: o que importa e a porta responder, para que o
+    # bloqueio da R2 seja significativo (porta aberta e barrada, nao ausente).
+    command: >
+      sh -c "/opt/kovenza/rotas.sh 172.28.20.254 && exec nc -lk -p 554"
+
+    depends_on:
+      - fw-kovenza
+    restart: unless-stopped
+
+  db-local:
+    build: ./db
+    image: kovenza/db:1.0
+    container_name: db-local
+    hostname: db-local
+
+    networks:
+      rede_dmz:
+        ipv4_address: 172.28.20.30
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Senha descartavel de laboratorio. Nao e, e nunca foi, credencial real
+    # do Kovenza Sports.
+    environment:
+      POSTGRES_PASSWORD: laboratorio_descartavel
+      POSTGRES_USER: kovenza_lab
+      POSTGRES_DB: replays_lab
+
+    volumes:
+      - ./scripts/rotas.sh:/opt/kovenza/rotas.sh:ro
+      - dados_db_local:/var/lib/postgresql/data
+
+    depends_on:
+      - fw-kovenza
+    restart: unless-stopped
+
+  # =========================================================================
+  # ZONA 3 - REDE NUVEM (internet simulada)
+  # =========================================================================
+
+  nuvem-supabase:
+    build: ./nuvem
+    image: kovenza/nuvem-supabase:1.0
+    container_name: nuvem-supabase
+    hostname: nuvem-supabase
+
+    networks:
+      rede_nuvem:
+        ipv4_address: 172.28.30.10
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    volumes:
+      - ./scripts/rotas.sh:/opt/kovenza/rotas.sh:ro
+
+    depends_on:
+      - fw-kovenza
+    restart: unless-stopped
+
+  nuvem-rtmp:
+    build: ./estacao
+    image: kovenza/ferramentas:1.0
+    container_name: nuvem-rtmp
+    hostname: nuvem-rtmp
+
+    networks:
+      rede_nuvem:
+        ipv4_address: 172.28.30.20
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    volumes:
+      - ./scripts/rotas.sh:/opt/kovenza/rotas.sh:ro
+
+    command: >
+      sh -c "/opt/kovenza/rotas.sh 172.28.30.254 && exec nc -lk -p 1935"
+
+    depends_on:
+      - fw-kovenza
+    restart: unless-stopped
